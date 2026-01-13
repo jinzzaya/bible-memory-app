@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import time
 import difflib
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 # --- 페이지 설정 ---
 st.set_page_config(page_title="100절 암송학교", layout="centered")
@@ -18,8 +21,74 @@ st.markdown("""
     .incorrect { color: red; font-weight: bold; }
     .diff-red { color: red; font-weight: bold; text-decoration: underline; }
     .diff-green { color: green; font-weight: bold; }
+    .login-box { padding: 20px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; text-align: center; }
 </style>
 """, unsafe_allow_html=True)
+
+# --- 구글 시트 연결 함수 ---
+# Streamlit Secrets에서 정보를 가져오도록 설정
+def get_google_sheet_client():
+    try:
+        # 배포 환경 (Streamlit Cloud)
+        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+        # st.secrets에 저장된 json 정보를 dict로 변환
+        creds_dict = dict(st.secrets["gcp_service_account"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        client = gspread.authorize(creds)
+        return client
+    except Exception as e:
+        # 로컬 환경 테스트용 (혹시 secrets가 없을 때)
+        return None
+
+def load_user_data_from_sheet(nickname):
+    """닉네임으로 시트에서 데이터 찾기"""
+    client = get_google_sheet_client()
+    if not client:
+        return [] # 연결 실패시 빈 리스트
+
+    try:
+        sheet = client.open("bible_db").sheet1
+        # 모든 기록 가져오기 (닉네임, 데이터)
+        records = sheet.get_all_records()
+        
+        # 해당 닉네임 찾기
+        for row in records:
+            if str(row.get('Nickname')) == nickname:
+                saved_str = str(row.get('SavedVerses', ''))
+                if saved_str:
+                    return [int(x) for x in saved_str.split(',') if x.strip()]
+                return []
+        
+        # 없으면 새로 만들기 (여기서는 리턴만 하고 저장은 나중에)
+        return []
+    except Exception as e:
+        st.error(f"데이터베이스 연결 오류: {e}")
+        return []
+
+def save_user_data_to_sheet(nickname, verse_list):
+    """닉네임의 데이터를 시트에 저장"""
+    client = get_google_sheet_client()
+    if not client:
+        return
+
+    try:
+        sheet = client.open("bible_db").sheet1
+        
+        # 리스트를 문자열로 변환 (예: [1, 5] -> "1,5")
+        data_str = ",".join(map(str, verse_list))
+        
+        # 1. 닉네임이 있는지 확인
+        cell = sheet.find(nickname)
+        
+        if cell:
+            # 있으면 해당 행의 2번째 열(B열) 업데이트
+            sheet.update_cell(cell.row, 2, data_str)
+        else:
+            # 없으면 새로운 행 추가
+            sheet.append_row([nickname, data_str])
+            
+    except Exception as e:
+        st.error(f"저장 중 오류 발생: {e}")
 
 # --- 데이터 로드 ---
 @st.cache_data
@@ -34,8 +103,12 @@ def load_data():
 df = load_data()
 
 # --- 세션 상태 초기화 ---
-if 'page' not in st.session_state: st.session_state.page = 'home'
-if 'saved_verses' not in st.session_state: st.session_state.saved_verses = [] 
+if 'page' not in st.session_state: st.session_state.page = 'login'
+if 'nickname' not in st.session_state: st.session_state.nickname = ""
+if 'saved_verses' not in st.session_state: st.session_state.saved_verses = []
+
+# 학습/암송 관련 상태
+if 'study_idx' not in st.session_state: st.session_state.study_idx = 0 
 if 'study_mode_hide' not in st.session_state: st.session_state.study_mode_hide = False 
 if 'study_reveal_content' not in st.session_state: st.session_state.study_reveal_content = False 
 if 'study_reveal_addr' not in st.session_state: st.session_state.study_reveal_addr = False 
@@ -54,13 +127,17 @@ def go_home():
     st.rerun()
 
 def toggle_save(verse_id):
+    verse_id = int(verse_id)
     if verse_id in st.session_state.saved_verses:
         st.session_state.saved_verses.remove(verse_id)
     else:
         st.session_state.saved_verses.append(verse_id)
+    
+    # 서버에 저장 (약간의 딜레이 발생 가능)
+    save_user_data_to_sheet(st.session_state.nickname, st.session_state.saved_verses)
+    # st.toast("저장되었습니다!", icon="✅") # 알림 메시지 (선택)
 
 def diff_strings(a, b):
-    # 두 문자열을 비교하여 틀린 부분만 HTML로 반환
     matcher = difflib.SequenceMatcher(None, a, b)
     html_output = []
     for opcode, a0, a1, b0, b1 in matcher.get_opcodes():
@@ -74,11 +151,38 @@ def diff_strings(a, b):
             html_output.append(f"<span class='diff-red'>{a[a0:a1]}</span>")
     return "".join(html_output)
 
+# --- 페이지 0: 로그인 (닉네임 입력) ---
+def page_login():
+    st.title("📖 100절 암송학교")
+    st.markdown("<div style='text-align: center; margin-top: 50px;'>", unsafe_allow_html=True)
+    st.subheader("닉네임으로 시작하기")
+    st.write("본인의 닉네임을 입력하면 저장된 말씀을 불러옵니다.")
+    
+    nickname_input = st.text_input("닉네임 입력", placeholder="예: 철수")
+    
+    if st.button("입장하기"):
+        if nickname_input.strip():
+            st.session_state.nickname = nickname_input.strip()
+            
+            # DB에서 데이터 로드 시도
+            with st.spinner("데이터를 불러오는 중..."):
+                st.session_state.saved_verses = load_user_data_from_sheet(st.session_state.nickname)
+            
+            st.session_state.page = 'home'
+            st.rerun()
+        else:
+            st.error("닉네임을 입력해주세요.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
 # --- 페이지 1: 홈 화면 ---
 def page_home():
     st.title("📖 100절 암송학교")
-    st.write(" ")
+    st.write(f"환영합니다, **{st.session_state.nickname}**님! 👋")
     
+    saved_count = len(st.session_state.saved_verses)
+    if saved_count > 0:
+        st.caption(f"현재 {saved_count}개의 말씀이 저장되어 있습니다.")
+
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("말씀 학습"):
@@ -92,6 +196,13 @@ def page_home():
         if st.button("저장된 말씀"):
             st.session_state.page = 'saved'
             st.rerun()
+    
+    st.markdown("---")
+    if st.button("로그아웃 (처음으로)"):
+        st.session_state.nickname = ""
+        st.session_state.saved_verses = []
+        st.session_state.page = 'login'
+        st.rerun()
 
 # --- 페이지 2: 말씀 학습 ---
 def page_study():
@@ -117,9 +228,38 @@ def page_study():
         st.write("해당하는 말씀이 없습니다.")
         return
 
-    # 순서 네비게이션
-    current_view_idx = st.slider("순서 이동", 1, len(filtered_df), 1) - 1
-    row = filtered_df.iloc[current_view_idx]
+    # --- 순서 네비게이션 개선 (버튼 + 슬라이더) ---
+    if st.session_state.study_idx >= len(filtered_df):
+        st.session_state.study_idx = 0
+    
+    nav_c1, nav_c2, nav_c3 = st.columns([1, 8, 1])
+    
+    with nav_c1:
+        if st.button("◀"):
+            if st.session_state.study_idx > 0:
+                st.session_state.study_idx -= 1
+                st.rerun()
+    
+    with nav_c2:
+        new_idx = st.slider(
+            "순서 이동", 
+            1, 
+            len(filtered_df), 
+            st.session_state.study_idx + 1, 
+            label_visibility="collapsed"
+        )
+        if new_idx - 1 != st.session_state.study_idx:
+            st.session_state.study_idx = new_idx - 1
+            st.rerun()
+
+    with nav_c3:
+        if st.button("▶"):
+            if st.session_state.study_idx < len(filtered_df) - 1:
+                st.session_state.study_idx += 1
+                st.rerun()
+    # ----------------------------------------------
+
+    row = filtered_df.iloc[st.session_state.study_idx]
     
     with col_toggle:
         if st.button("🙈 외워보기" if not st.session_state.study_mode_hide else "👁️ 다 보기"):
@@ -130,10 +270,9 @@ def page_study():
 
     st.markdown("---")
     
-    verse_id = row['번호']
+    verse_id = int(row['번호'])
     is_saved = verse_id in st.session_state.saved_verses
     
-    # 하트 버튼
     heart_col1, heart_col2 = st.columns([9, 1])
     with heart_col2:
         heart_label = "❤️" if is_saved else "🤍"
@@ -229,28 +368,27 @@ def page_test():
     c1.subheader(f"{verse_num} / 100")
     
     with c2:
-        # 힌트 버튼 로직 (정답보기 클릭 시 즉시 종료)
+        # 힌트 버튼 로직 (0. 정답보기)
         hint_label = f"힌트 ({st.session_state.test_hint_level})"
-        if st.session_state.test_hint_level == 1: # 1에서 누르면 0됨
+        if st.session_state.test_hint_level == 0: 
             hint_label = "정답보기"
         
-        # 힌트 버튼이 클릭 가능한 상태일 때 (status가 input일 때만)
         if st.session_state.test_status == 'input':
             if st.button(hint_label):
-                new_level = st.session_state.test_hint_level - 1
-                st.session_state.test_hint_level = new_level
                 
-                # 정답보기(0)가 되면 즉시 오답 처리 후 종료
-                if new_level == 0:
+                # 정답보기(0) 상태에서 버튼을 누르면 종료(Wrong 처리)
+                if st.session_state.test_hint_level == 0:
                     st.session_state.test_answers.append({
                         '번호': row['번호'],
                         '장절': row['장절'],
                         '내용': row['내용']
                     })
-                    # 사용자가 입력을 포기했으므로 빈값 처리 (전체가 틀린것으로 표시됨)
                     st.session_state.test_user_addr = "" 
                     st.session_state.test_user_content = ""
                     st.session_state.test_status = 'wrong'
+                else:
+                    # 힌트 레벨 감소 (3->2, 2->1, 1->0)
+                    st.session_state.test_hint_level -= 1
                 
                 st.rerun()
     
@@ -264,48 +402,46 @@ def page_test():
     real_content = row['내용']
     real_addr = row['장절']
     
-    # 문제 범위
     try:
         base_addr = real_addr.split(':')[0]
     except:
         base_addr = real_addr 
     st.info(f"📖 문제 범위: **{base_addr}**")
 
-    # --- 힌트 준비 ---
     addr_hint_msg = ""
     content_hint_msgs = []
     
-    # 힌트 2단계 이하 (첫 단어)
+    # 힌트 2 (첫 단어)
     if st.session_state.test_hint_level <= 2:
         first_word = real_content.split()[0]
         content_hint_msgs.append(f"💡 첫 단어: **{first_word}**...")
     
-    # 힌트 1단계 이하 (장절)
+    # 힌트 1 (장절) -> 순서 변경 반영됨
     if st.session_state.test_hint_level <= 1:
         addr_hint_msg = f"💡 장절 힌트: **{real_addr}**"
-        
-    # 정답보기(0)는 위에서 바로 종료 처리되므로 여기선 힌트 텍스트 필요 없음
+
+    # 힌트 0 (마지막 단어)
+    if st.session_state.test_hint_level == 0:
+        last_word = real_content.split()[-1]
+        content_hint_msgs.append(f"💡 마지막 단어: ...**{last_word}**")
 
     
     placeholder = st.empty()
     
-    # 입력 키 (리셋용)
     input_addr_key = f"input_addr_{st.session_state.test_current_idx}_{st.session_state.input_key_suffix}"
     input_content_key = f"input_content_{st.session_state.test_current_idx}_{st.session_state.input_key_suffix}"
 
     with placeholder.container():
         if st.session_state.test_status == 'input':
             
-            # 1. 장절 입력 섹션
             st.write("장절을 입력하세요 (예: 창세기 1:26)")
             if addr_hint_msg:
                 st.info(addr_hint_msg)
             
             u_addr = st.text_input("장절 입력", key=input_addr_key, label_visibility="collapsed")
             
-            st.write(" ") # 간격
+            st.write(" ") 
 
-            # 2. 내용 입력 섹션
             st.write("내용을 입력하세요:")
             if content_hint_msgs:
                 st.info("\n\n".join(content_hint_msgs))
@@ -326,7 +462,6 @@ def page_test():
             clean_u_addr = st.session_state.test_user_addr.strip().replace(" ", "")
             clean_r_addr = real_addr.strip().replace(" ", "")
             
-            # 장절 비교
             if clean_u_addr != clean_r_addr:
                 if st.session_state.test_user_addr == "":
                      st.markdown(f"**내가 쓴 장절:** (입력 없음)", unsafe_allow_html=True)
@@ -338,7 +473,6 @@ def page_test():
             
             st.markdown("---")
             
-            # 내용 비교
             clean_u_content = st.session_state.test_user_content.strip() 
             diff_html = diff_strings(clean_u_content, real_content)
             
@@ -390,6 +524,9 @@ def page_test_result():
     st.header("암송 결과")
     
     total = st.session_state.test_current_idx
+    if st.session_state.test_status in ['correct', 'wrong']:
+        total += 1
+        
     if total == 0: total = 1 
     
     score = st.session_state.test_score
@@ -411,7 +548,7 @@ def page_test_result():
             c1.write(item['장절'])
             c2.write(item['내용'])
             
-            verse_id = item['번호']
+            verse_id = int(item['번호'])
             is_saved = verse_id in st.session_state.saved_verses
             heart_icon = "❤️" if is_saved else "🤍"
             
@@ -425,7 +562,9 @@ def page_test_result():
         go_home()
 
 
-if st.session_state.page == 'home':
+if st.session_state.page == 'login':
+    page_login()
+elif st.session_state.page == 'home':
     page_home()
 elif st.session_state.page == 'study':
     page_study()
