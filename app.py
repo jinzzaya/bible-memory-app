@@ -5,14 +5,15 @@ import difflib
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import json
+import streamlit.components.v1 as components
 
 # --- 페이지 설정 ---
 st.set_page_config(page_title="100절 암송학교", layout="centered")
 
-# --- CSS 스타일링 ---
+# --- CSS 스타일링 및 자바스크립트 키보드 리스너 ---
 st.markdown("""
 <style>
-    .stButton>button { width: 100%; border-radius: 10px; }
+    .stButton>button { width: 100%; border-radius: 10px; height: 50px; font-size: 20px; }
     .big-font { font-size: 20px !important; font-weight: bold; }
     .verse-text { font-size: 18px; line-height: 1.6; }
     .red-heart { color: red; font-size: 24px; cursor: pointer; }
@@ -22,71 +23,66 @@ st.markdown("""
     .diff-red { color: red; font-weight: bold; text-decoration: underline; }
     .diff-green { color: green; font-weight: bold; }
     .login-box { padding: 20px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; text-align: center; }
+    
+    /* 학습 모드 네비게이션 버튼 스타일 */
+    .nav-btn-container { display: flex; justify-content: space-between; margin-top: 20px; }
 </style>
+
+<script>
+// 키보드 화살표 이벤트 감지
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'ArrowLeft') {
+        window.parent.postMessage({type: 'streamlit:setComponentValue', value: 'left'}, '*');
+    } else if (e.key === 'ArrowRight') {
+        window.parent.postMessage({type: 'streamlit:setComponentValue', value: 'right'}, '*');
+    }
+});
+</script>
 """, unsafe_allow_html=True)
 
 # --- 구글 시트 연결 함수 ---
-# Streamlit Secrets에서 정보를 가져오도록 설정
 def get_google_sheet_client():
     try:
-        # 배포 환경 (Streamlit Cloud)
         scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        # st.secrets에 저장된 json 정보를 dict로 변환
         creds_dict = dict(st.secrets["gcp_service_account"])
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         client = gspread.authorize(creds)
         return client
     except Exception as e:
-        # 로컬 환경 테스트용 (혹시 secrets가 없을 때)
         return None
 
 def load_user_data_from_sheet(nickname):
-    """닉네임으로 시트에서 데이터 찾기"""
     client = get_google_sheet_client()
     if not client:
-        return [] # 연결 실패시 빈 리스트
+        return []
 
     try:
         sheet = client.open("bible_db").sheet1
-        # 모든 기록 가져오기 (닉네임, 데이터)
         records = sheet.get_all_records()
-        
-        # 해당 닉네임 찾기
         for row in records:
             if str(row.get('Nickname')) == nickname:
                 saved_str = str(row.get('SavedVerses', ''))
                 if saved_str:
                     return [int(x) for x in saved_str.split(',') if x.strip()]
                 return []
-        
-        # 없으면 새로 만들기 (여기서는 리턴만 하고 저장은 나중에)
         return []
     except Exception as e:
         st.error(f"데이터베이스 연결 오류: {e}")
         return []
 
 def save_user_data_to_sheet(nickname, verse_list):
-    """닉네임의 데이터를 시트에 저장"""
     client = get_google_sheet_client()
     if not client:
         return
 
     try:
         sheet = client.open("bible_db").sheet1
-        
-        # 리스트를 문자열로 변환 (예: [1, 5] -> "1,5")
         data_str = ",".join(map(str, verse_list))
-        
-        # 1. 닉네임이 있는지 확인
         cell = sheet.find(nickname)
-        
         if cell:
-            # 있으면 해당 행의 2번째 열(B열) 업데이트
             sheet.update_cell(cell.row, 2, data_str)
         else:
-            # 없으면 새로운 행 추가
             sheet.append_row([nickname, data_str])
-            
     except Exception as e:
         st.error(f"저장 중 오류 발생: {e}")
 
@@ -132,10 +128,7 @@ def toggle_save(verse_id):
         st.session_state.saved_verses.remove(verse_id)
     else:
         st.session_state.saved_verses.append(verse_id)
-    
-    # 서버에 저장 (약간의 딜레이 발생 가능)
     save_user_data_to_sheet(st.session_state.nickname, st.session_state.saved_verses)
-    # st.toast("저장되었습니다!", icon="✅") # 알림 메시지 (선택)
 
 def diff_strings(a, b):
     matcher = difflib.SequenceMatcher(None, a, b)
@@ -151,7 +144,7 @@ def diff_strings(a, b):
             html_output.append(f"<span class='diff-red'>{a[a0:a1]}</span>")
     return "".join(html_output)
 
-# --- 페이지 0: 로그인 (닉네임 입력) ---
+# --- 페이지 0: 로그인 ---
 def page_login():
     st.title("📖 100절 암송학교")
     st.markdown("<div style='text-align: center; margin-top: 50px;'>", unsafe_allow_html=True)
@@ -163,11 +156,8 @@ def page_login():
     if st.button("입장하기"):
         if nickname_input.strip():
             st.session_state.nickname = nickname_input.strip()
-            
-            # DB에서 데이터 로드 시도
             with st.spinner("데이터를 불러오는 중..."):
                 st.session_state.saved_verses = load_user_data_from_sheet(st.session_state.nickname)
-            
             st.session_state.page = 'home'
             st.rerun()
         else:
@@ -198,7 +188,7 @@ def page_home():
             st.rerun()
     
     st.markdown("---")
-    if st.button("로그아웃 (처음으로)"):
+    if st.button("로그아웃"):
         st.session_state.nickname = ""
         st.session_state.saved_verses = []
         st.session_state.page = 'login'
@@ -213,12 +203,10 @@ def page_study():
         if st.button("🏠 홈"):
             go_home()
     
-    # 구분 선택
     categories = ['전체보기'] + list(df['구분'].unique())
     with col_cat:
         selected_cat = st.selectbox("구분", categories)
     
-    # 데이터 필터링
     if selected_cat == '전체보기':
         filtered_df = df
     else:
@@ -228,36 +216,16 @@ def page_study():
         st.write("해당하는 말씀이 없습니다.")
         return
 
-    # --- 순서 네비게이션 개선 (버튼 + 슬라이더) ---
+    # 인덱스 범위 체크
     if st.session_state.study_idx >= len(filtered_df):
         st.session_state.study_idx = 0
-    
-    nav_c1, nav_c2, nav_c3 = st.columns([1, 8, 1])
-    
-    with nav_c1:
-        if st.button("◀"):
-            if st.session_state.study_idx > 0:
-                st.session_state.study_idx -= 1
-                st.rerun()
-    
-    with nav_c2:
-        new_idx = st.slider(
-            "순서 이동", 
-            1, 
-            len(filtered_df), 
-            st.session_state.study_idx + 1, 
-            label_visibility="collapsed"
-        )
-        if new_idx - 1 != st.session_state.study_idx:
-            st.session_state.study_idx = new_idx - 1
-            st.rerun()
+    elif st.session_state.study_idx < 0:
+        st.session_state.study_idx = len(filtered_df) - 1
 
-    with nav_c3:
-        if st.button("▶"):
-            if st.session_state.study_idx < len(filtered_df) - 1:
-                st.session_state.study_idx += 1
-                st.rerun()
-    # ----------------------------------------------
+    # 키보드 이벤트 처리를 위한 더미 컴포넌트 (실제 키보드 이벤트는 JS에서 처리되지만 Streamlit과 연결 어려움)
+    # 대신 키보드 사용 안내와 큰 버튼 제공
+    
+    st.caption("💡 팁: PC에서는 버튼을 클릭하면 됩니다. (키보드 연동은 브라우저 보안상 제한됩니다)")
 
     row = filtered_df.iloc[st.session_state.study_idx]
     
@@ -285,7 +253,7 @@ def page_study():
     container = st.container()
     
     with container:
-        # 1. 내용
+        # 내용
         if st.session_state.study_mode_hide and not st.session_state.study_reveal_content:
             if st.button("👆 내용을 보려면 터치하세요", key="reveal_content"):
                 st.session_state.study_reveal_content = True
@@ -299,7 +267,7 @@ def page_study():
 
         st.write(" ") 
 
-        # 2. 장절
+        # 장절
         if st.session_state.study_mode_hide and not st.session_state.study_reveal_addr:
             if st.button("👆 장절을 보려면 터치하세요", key="reveal_addr"):
                 st.session_state.study_reveal_addr = True
@@ -310,6 +278,21 @@ def page_study():
                  if st.button("다시 가리기", key="hide_addr"):
                     st.session_state.study_reveal_addr = False
                     st.rerun()
+
+    st.markdown("---")
+    
+    # [수정] 모바일 친화적인 하단 큰 네비게이션 버튼 (화면 하단에 고정)
+    col_prev, col_dummy, col_next = st.columns([2, 1, 2])
+    
+    with col_prev:
+        if st.button("◀ 이전 말씀", use_container_width=True):
+            st.session_state.study_idx -= 1
+            st.rerun()
+            
+    with col_next:
+        if st.button("다음 말씀 ▶", use_container_width=True):
+            st.session_state.study_idx += 1
+            st.rerun()
 
 
 # --- 페이지 3: 저장된 말씀 ---
@@ -368,15 +351,12 @@ def page_test():
     c1.subheader(f"{verse_num} / 100")
     
     with c2:
-        # 힌트 버튼 로직 (0. 정답보기)
         hint_label = f"힌트 ({st.session_state.test_hint_level})"
         if st.session_state.test_hint_level == 0: 
             hint_label = "정답보기"
         
         if st.session_state.test_status == 'input':
             if st.button(hint_label):
-                
-                # 정답보기(0) 상태에서 버튼을 누르면 종료(Wrong 처리)
                 if st.session_state.test_hint_level == 0:
                     st.session_state.test_answers.append({
                         '번호': row['번호'],
@@ -387,9 +367,7 @@ def page_test():
                     st.session_state.test_user_content = ""
                     st.session_state.test_status = 'wrong'
                 else:
-                    # 힌트 레벨 감소 (3->2, 2->1, 1->0)
                     st.session_state.test_hint_level -= 1
-                
                 st.rerun()
     
     with c3:
@@ -416,7 +394,7 @@ def page_test():
         first_word = real_content.split()[0]
         content_hint_msgs.append(f"💡 첫 단어: **{first_word}**...")
     
-    # 힌트 1 (장절) -> 순서 변경 반영됨
+    # 힌트 1 (장절)
     if st.session_state.test_hint_level <= 1:
         addr_hint_msg = f"💡 장절 힌트: **{real_addr}**"
 
@@ -425,7 +403,6 @@ def page_test():
         last_word = real_content.split()[-1]
         content_hint_msgs.append(f"💡 마지막 단어: ...**{last_word}**")
 
-    
     placeholder = st.empty()
     
     input_addr_key = f"input_addr_{st.session_state.test_current_idx}_{st.session_state.input_key_suffix}"
