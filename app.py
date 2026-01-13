@@ -10,10 +10,10 @@ import streamlit.components.v1 as components
 # --- 페이지 설정 ---
 st.set_page_config(page_title="100절 암송학교", layout="centered")
 
-# --- CSS 스타일링 및 자바스크립트 키보드 리스너 ---
+# --- CSS 스타일링 (화살표 버튼 스타일 추가) ---
 st.markdown("""
 <style>
-    .stButton>button { width: 100%; border-radius: 10px; height: 50px; font-size: 20px; }
+    .stButton>button { width: 100%; border-radius: 10px; }
     .big-font { font-size: 20px !important; font-weight: bold; }
     .verse-text { font-size: 18px; line-height: 1.6; }
     .red-heart { color: red; font-size: 24px; cursor: pointer; }
@@ -24,20 +24,28 @@ st.markdown("""
     .diff-green { color: green; font-weight: bold; }
     .login-box { padding: 20px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; text-align: center; }
     
-    /* 학습 모드 네비게이션 버튼 스타일 */
-    .nav-btn-container { display: flex; justify-content: space-between; margin-top: 20px; }
-</style>
-
-<script>
-// 키보드 화살표 이벤트 감지
-document.addEventListener('keydown', function(e) {
-    if (e.key === 'ArrowLeft') {
-        window.parent.postMessage({type: 'streamlit:setComponentValue', value: 'left'}, '*');
-    } else if (e.key === 'ArrowRight') {
-        window.parent.postMessage({type: 'streamlit:setComponentValue', value: 'right'}, '*');
+    /* 네비게이션 화살표 버튼 스타일 */
+    .nav-arrow { 
+        font-size: 24px; 
+        font-weight: bold; 
+        border: none; 
+        background: transparent; 
+        color: #555;
     }
-});
-</script>
+    /* 모바일에서 버튼 높이 맞춤 */
+    div[data-testid="column"] > div > div > div > div > div > button {
+        min-height: 300px; /* 내용 높이만큼 버튼 키우기 */
+        border: none;
+        background-color: transparent;
+        font-size: 30px;
+        color: #888;
+    }
+    div[data-testid="column"] > div > div > div > div > div > button:hover {
+        background-color: #f0f0f0;
+        color: #333;
+        border: none;
+    }
+</style>
 """, unsafe_allow_html=True)
 
 # --- 구글 시트 연결 함수 ---
@@ -198,6 +206,7 @@ def page_home():
 def page_study():
     st.header("말씀 학습")
     
+    # 상단 메뉴
     col_back, col_cat, col_toggle = st.columns([1, 2, 2])
     with col_back:
         if st.button("🏠 홈"):
@@ -216,16 +225,25 @@ def page_study():
         st.write("해당하는 말씀이 없습니다.")
         return
 
-    # 인덱스 범위 체크
+    # 인덱스 범위 조정
     if st.session_state.study_idx >= len(filtered_df):
         st.session_state.study_idx = 0
     elif st.session_state.study_idx < 0:
         st.session_state.study_idx = len(filtered_df) - 1
 
-    # 키보드 이벤트 처리를 위한 더미 컴포넌트 (실제 키보드 이벤트는 JS에서 처리되지만 Streamlit과 연결 어려움)
-    # 대신 키보드 사용 안내와 큰 버튼 제공
-    
-    st.caption("💡 팁: PC에서는 버튼을 클릭하면 됩니다. (키보드 연동은 브라우저 보안상 제한됩니다)")
+    # --- 1. 상단 슬라이더 ---
+    # 슬라이더 값 변경 시 study_idx 업데이트
+    current_idx = st.session_state.study_idx + 1
+    new_idx = st.slider(
+        "순서 이동", 
+        1, 
+        len(filtered_df), 
+        current_idx, 
+        label_visibility="collapsed"
+    )
+    if new_idx != current_idx:
+        st.session_state.study_idx = new_idx - 1
+        st.rerun()
 
     row = filtered_df.iloc[st.session_state.study_idx]
     
@@ -241,56 +259,59 @@ def page_study():
     verse_id = int(row['번호'])
     is_saved = verse_id in st.session_state.saved_verses
     
-    heart_col1, heart_col2 = st.columns([9, 1])
-    with heart_col2:
-        heart_label = "❤️" if is_saved else "🤍"
-        if st.button(heart_label, key=f"heart_{verse_id}"):
-            toggle_save(verse_id)
-            st.rerun()
-    
-    st.caption(f"No. {verse_id} ({row['구분']})")
-    
-    container = st.container()
-    
-    with container:
-        # 내용
-        if st.session_state.study_mode_hide and not st.session_state.study_reveal_content:
-            if st.button("👆 내용을 보려면 터치하세요", key="reveal_content"):
-                st.session_state.study_reveal_content = True
-                st.rerun()
-        else:
-            st.markdown(f"<div style='text-align: center; font-size: 22px; padding: 20px;'>{row['내용']}</div>", unsafe_allow_html=True)
-            if st.session_state.study_mode_hide:
-                 if st.button("다시 가리기", key="hide_content"):
-                    st.session_state.study_reveal_content = False
-                    st.rerun()
+    # --- 2. 좌우 화살표 + 중앙 내용 배치 ---
+    # 레이아웃 비율: 버튼(1) : 내용(8) : 버튼(1)
+    # 모바일에서도 이 비율 유지
+    col_left, col_center, col_right = st.columns([1, 8, 1], gap="small")
 
-        st.write(" ") 
-
-        # 장절
-        if st.session_state.study_mode_hide and not st.session_state.study_reveal_addr:
-            if st.button("👆 장절을 보려면 터치하세요", key="reveal_addr"):
-                st.session_state.study_reveal_addr = True
-                st.rerun()
-        else:
-            st.markdown(f"<div style='text-align: center; font-size: 18px; color: gray; font-weight: bold;'>{row['장절']}</div>", unsafe_allow_html=True)
-            if st.session_state.study_mode_hide:
-                 if st.button("다시 가리기", key="hide_addr"):
-                    st.session_state.study_reveal_addr = False
-                    st.rerun()
-
-    st.markdown("---")
-    
-    # [수정] 모바일 친화적인 하단 큰 네비게이션 버튼 (화면 하단에 고정)
-    col_prev, col_dummy, col_next = st.columns([2, 1, 2])
-    
-    with col_prev:
-        if st.button("◀ 이전 말씀", use_container_width=True):
+    with col_left:
+        # 왼쪽(이전) 버튼: 높이를 키워 터치 영역 확보
+        if st.button("❰", key="prev_btn", use_container_width=True):
             st.session_state.study_idx -= 1
             st.rerun()
-            
-    with col_next:
-        if st.button("다음 말씀 ▶", use_container_width=True):
+
+    with col_center:
+        # 하트 버튼 (오른쪽 위)
+        h_col1, h_col2 = st.columns([8, 1])
+        with h_col2:
+            heart_label = "❤️" if is_saved else "🤍"
+            if st.button(heart_label, key=f"heart_{verse_id}"):
+                toggle_save(verse_id)
+                st.rerun()
+        
+        st.caption(f"No. {verse_id} ({row['구분']})")
+        
+        # 내용 표시 영역
+        container = st.container()
+        with container:
+            if st.session_state.study_mode_hide and not st.session_state.study_reveal_content:
+                if st.button("👆 내용을 보려면 터치하세요", key="reveal_content"):
+                    st.session_state.study_reveal_content = True
+                    st.rerun()
+            else:
+                st.markdown(f"<div style='text-align: center; font-size: 22px; padding: 20px;'>{row['내용']}</div>", unsafe_allow_html=True)
+                if st.session_state.study_mode_hide:
+                     if st.button("다시 가리기", key="hide_content"):
+                        st.session_state.study_reveal_content = False
+                        st.rerun()
+
+            st.write(" ") 
+
+            # 장절
+            if st.session_state.study_mode_hide and not st.session_state.study_reveal_addr:
+                if st.button("👆 장절을 보려면 터치하세요", key="reveal_addr"):
+                    st.session_state.study_reveal_addr = True
+                    st.rerun()
+            else:
+                st.markdown(f"<div style='text-align: center; font-size: 18px; color: gray; font-weight: bold;'>{row['장절']}</div>", unsafe_allow_html=True)
+                if st.session_state.study_mode_hide:
+                     if st.button("다시 가리기", key="hide_addr"):
+                        st.session_state.study_reveal_addr = False
+                        st.rerun()
+    
+    with col_right:
+        # 오른쪽(다음) 버튼
+        if st.button("❱", key="next_btn", use_container_width=True):
             st.session_state.study_idx += 1
             st.rerun()
 
@@ -351,6 +372,7 @@ def page_test():
     c1.subheader(f"{verse_num} / 100")
     
     with c2:
+        # 힌트 버튼 로직 (0. 정답보기)
         hint_label = f"힌트 ({st.session_state.test_hint_level})"
         if st.session_state.test_hint_level == 0: 
             hint_label = "정답보기"
