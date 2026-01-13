@@ -24,27 +24,12 @@ st.markdown("""
     .diff-green { color: green; font-weight: bold; }
     .login-box { padding: 20px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; text-align: center; }
     
-    div[data-testid="column"] {
-        width: auto !important;
-        flex: 1 1 auto !important;
-        min-width: 10px !important;
-    }
-    div[data-testid="stHorizontalBlock"] {
-        flex-direction: row !important;
-        flex-wrap: nowrap !important;
-    }
-    .arrow-btn button {
-        background-color: transparent !important;
-        border: none !important;
-        color: #888 !important;
-        font-size: 24px !important;
-        padding: 0px !important;
-        margin: 0px !important;
-        min-height: 0px !important;
-        height: auto !important;
-    }
-    .arrow-btn button:hover {
-        color: #333 !important;
+    /* 네비게이션 버튼 스타일 */
+    .nav-buttons {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        margin-top: 10px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -59,17 +44,6 @@ def get_google_sheet_client():
         return client
     except Exception as e:
         return None
-
-def check_db_connection():
-    """DB 연결 테스트"""
-    client = get_google_sheet_client()
-    if not client:
-        return False, "Secrets 설정이 없거나 잘못되었습니다."
-    try:
-        sheet = client.open("bible_db").sheet1
-        return True, "연결 성공"
-    except Exception as e:
-        return False, f"시트 열기 실패: {str(e)} (이메일 공유 확인)"
 
 def load_user_data_from_sheet(nickname):
     client = get_google_sheet_client()
@@ -87,33 +61,22 @@ def load_user_data_from_sheet(nickname):
                 return []
         return []
     except Exception as e:
-        st.error(f"데이터 불러오기 오류: {e}")
+        st.error(f"데이터베이스 연결 오류: {e}")
         return []
 
 def save_user_data_to_sheet(nickname, verse_list):
     client = get_google_sheet_client()
     if not client:
-        st.error("DB 연결이 끊겨 저장이 안 됩니다.")
         return
 
     try:
         sheet = client.open("bible_db").sheet1
         data_str = ",".join(map(str, verse_list))
-        
-        # 1. 시트 전체 데이터를 가져와서 행 찾기 (find보다 안정적)
-        records = sheet.get_all_records()
-        row_idx = -1
-        
-        for i, row in enumerate(records):
-            if str(row.get('Nickname')) == nickname:
-                row_idx = i + 2 # 엑셀은 1부터 시작 + 헤더 1줄 = +2
-                break
-        
-        if row_idx != -1:
-            sheet.update_cell(row_idx, 2, data_str)
+        cell = sheet.find(nickname)
+        if cell:
+            sheet.update_cell(cell.row, 2, data_str)
         else:
             sheet.append_row([nickname, data_str])
-            
     except Exception as e:
         st.error(f"저장 중 오류 발생: {e}")
 
@@ -180,23 +143,12 @@ def page_login():
     st.title("📖 100절 암송학교")
     st.markdown("<div style='text-align: center; margin-top: 50px;'>", unsafe_allow_html=True)
     st.subheader("닉네임으로 시작하기")
-    
-    # DB 연결 상태 확인
-    is_connected, msg = check_db_connection()
-    if is_connected:
-        st.success(f"🟢 서버 연결 성공! ({msg})")
-    else:
-        st.error(f"🔴 서버 연결 실패: {msg}")
-        st.caption("Streamlit Cloud의 Secrets 설정과 구글 시트 공유 여부를 확인해주세요.")
-
     st.write("본인의 닉네임을 입력하면 저장된 말씀을 불러옵니다.")
     
     nickname_input = st.text_input("닉네임 입력", placeholder="예: 철수")
     
     if st.button("입장하기"):
-        if not is_connected:
-            st.error("서버 연결이 안 되어 있어서 진행할 수 없습니다.")
-        elif nickname_input.strip():
+        if nickname_input.strip():
             st.session_state.nickname = nickname_input.strip()
             with st.spinner("데이터를 불러오는 중..."):
                 st.session_state.saved_verses = load_user_data_from_sheet(st.session_state.nickname)
@@ -264,7 +216,7 @@ def page_study():
     elif st.session_state.study_idx < 0:
         st.session_state.study_idx = len(filtered_df) - 1
 
-    # 상단 슬라이더
+    # --- 1. 상단 슬라이더 ---
     current_idx = st.session_state.study_idx + 1
     new_idx = st.slider(
         "순서 이동", 
@@ -291,59 +243,59 @@ def page_study():
     verse_id = int(row['번호'])
     is_saved = verse_id in st.session_state.saved_verses
     
-    # --- 좌우 네비게이션 레이아웃 ---
-    col_left, col_center, col_right = st.columns([1, 7, 1], gap="small")
+    # 하트 및 내용 영역
+    heart_col1, heart_col2 = st.columns([9, 1])
+    with heart_col2:
+        heart_label = "❤️" if is_saved else "🤍"
+        if st.button(heart_label, key=f"heart_{verse_id}"):
+            toggle_save(verse_id)
+            st.rerun()
+    
+    st.caption(f"No. {verse_id} ({row['구분']})")
+    
+    container = st.container()
+    
+    with container:
+        # 내용
+        if st.session_state.study_mode_hide and not st.session_state.study_reveal_content:
+            if st.button("👆 내용을 보려면 터치하세요", key="reveal_content"):
+                st.session_state.study_reveal_content = True
+                st.rerun()
+        else:
+            st.markdown(f"<div style='text-align: center; font-size: 22px; padding: 20px;'>{row['내용']}</div>", unsafe_allow_html=True)
+            if st.session_state.study_mode_hide:
+                 if st.button("다시 가리기", key="hide_content"):
+                    st.session_state.study_reveal_content = False
+                    st.rerun()
 
-    with col_left:
-        st.markdown('<div class="arrow-btn">', unsafe_allow_html=True)
-        if st.button("◀", key="prev_btn", use_container_width=True):
+        st.write(" ") 
+
+        # 장절
+        if st.session_state.study_mode_hide and not st.session_state.study_reveal_addr:
+            if st.button("👆 장절을 보려면 터치하세요", key="reveal_addr"):
+                st.session_state.study_reveal_addr = True
+                st.rerun()
+        else:
+            st.markdown(f"<div style='text-align: center; font-size: 18px; color: gray; font-weight: bold;'>{row['장절']}</div>", unsafe_allow_html=True)
+            if st.session_state.study_mode_hide:
+                 if st.button("다시 가리기", key="hide_addr"):
+                    st.session_state.study_reveal_addr = False
+                    st.rerun()
+
+    st.markdown("---")
+    
+    # --- 2. 하단 네비게이션 버튼 (나란히 배치) ---
+    col_prev, col_next = st.columns(2)
+    
+    with col_prev:
+        if st.button("◀ 이전", use_container_width=True):
             st.session_state.study_idx -= 1
             st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    with col_center:
-        h_col1, h_col2 = st.columns([8, 1])
-        with h_col2:
-            heart_label = "❤️" if is_saved else "🤍"
-            if st.button(heart_label, key=f"heart_{verse_id}"):
-                toggle_save(verse_id)
-                st.rerun()
-        
-        st.caption(f"No. {verse_id} ({row['구분']})")
-        
-        container = st.container()
-        with container:
-            if st.session_state.study_mode_hide and not st.session_state.study_reveal_content:
-                if st.button("👆 내용을 보려면 터치하세요", key="reveal_content"):
-                    st.session_state.study_reveal_content = True
-                    st.rerun()
-            else:
-                st.markdown(f"<div style='text-align: center; font-size: 22px; padding: 20px;'>{row['내용']}</div>", unsafe_allow_html=True)
-                if st.session_state.study_mode_hide:
-                     if st.button("다시 가리기", key="hide_content"):
-                        st.session_state.study_reveal_content = False
-                        st.rerun()
-
-            st.write(" ") 
-
-            # 장절
-            if st.session_state.study_mode_hide and not st.session_state.study_reveal_addr:
-                if st.button("👆 장절을 보려면 터치하세요", key="reveal_addr"):
-                    st.session_state.study_reveal_addr = True
-                    st.rerun()
-            else:
-                st.markdown(f"<div style='text-align: center; font-size: 18px; color: gray; font-weight: bold;'>{row['장절']}</div>", unsafe_allow_html=True)
-                if st.session_state.study_mode_hide:
-                     if st.button("다시 가리기", key="hide_addr"):
-                        st.session_state.study_reveal_addr = False
-                        st.rerun()
-    
-    with col_right:
-        st.markdown('<div class="arrow-btn">', unsafe_allow_html=True)
-        if st.button("▶", key="next_btn", use_container_width=True):
+            
+    with col_next:
+        if st.button("다음 ▶", use_container_width=True):
             st.session_state.study_idx += 1
             st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
 
 
 # --- 페이지 3: 저장된 말씀 ---
@@ -440,13 +392,16 @@ def page_test():
     addr_hint_msg = ""
     content_hint_msgs = []
     
+    # 힌트 2 (첫 단어)
     if st.session_state.test_hint_level <= 2:
         first_word = real_content.split()[0]
         content_hint_msgs.append(f"💡 첫 단어: **{first_word}**...")
     
+    # 힌트 1 (장절)
     if st.session_state.test_hint_level <= 1:
         addr_hint_msg = f"💡 장절 힌트: **{real_addr}**"
 
+    # 힌트 0 (마지막 단어)
     if st.session_state.test_hint_level == 0:
         last_word = real_content.split()[-1]
         content_hint_msgs.append(f"💡 마지막 단어: ...**{last_word}**")
