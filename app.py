@@ -46,30 +46,6 @@ st.markdown("""
     .arrow-btn button:hover {
         color: #333 !important;
     }
-    
-    /* ===================== 모바일 전용 CSS (추가됨) ===================== */
-    @media (max-width: 768px) {
-        body {
-            overflow-x: hidden !important;
-            width: 100% !important;
-        }
-        .block-container {
-            max-width: 100% !important;
-            padding-left: 1rem !important;
-            padding-right: 1rem !important;
-        }
-        .stButton>button {
-            font-size: 16px !important;
-            padding: 8px 12px !important;
-        }
-        .arrow-btn, .mobile-arrow-btn {
-            width: fit-content !important;
-        }
-        .verse-text, .big-font {
-            font-size: 16px !important;
-        }
-    }
-    /* ==================================================================== */
 </style>
 """, unsafe_allow_html=True)
 
@@ -315,36 +291,12 @@ def page_study():
     verse_id = int(row['번호'])
     is_saved = verse_id in st.session_state.saved_verses
     
-    # --- 모바일 최적화된 좌우 네비게이션 레이아웃 ---
-    # 모바일에서는 가로 스크롤을 막기 위해 gap: none, 버튼 크기 축소
-    col_left, col_center, col_right = st.columns([1, 6, 1], gap="none")  # ✅ 수정: 7→6, gap none
+    # --- 좌우 네비게이션 레이아웃 ---
+    col_left, col_center, col_right = st.columns([1, 7, 1], gap="small")
 
     with col_left:
-        # 모바일용 화살표 버튼 스타일
-        st.markdown(
-            """
-            <style>
-                .mobile-arrow-btn button {
-                    width: 30px !important;
-                    height: 30px !important;
-                    padding: 0 !important;
-                    font-size: 16px !important;
-                    line-height: 1 !important;
-                    min-height: 0 !important;
-                    background: transparent !important;
-                    border: none !important;
-                    color: #555 !important;
-                    border-radius: 50% !important;
-                }
-                .mobile-arrow-btn button:hover {
-                    background-color: #f0f0f0 !important;
-                }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-        st.markdown('<div class="mobile-arrow-btn">', unsafe_allow_html=True)
-        if st.button("◀", key="prev_btn", use_container_width=False):  # ✅ 수정: use_container_width=False
+        st.markdown('<div class="arrow-btn">', unsafe_allow_html=True)
+        if st.button("◀", key="prev_btn", use_container_width=True):
             st.session_state.study_idx -= 1
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
@@ -366,7 +318,7 @@ def page_study():
                     st.session_state.study_reveal_content = True
                     st.rerun()
             else:
-                st.markdown(f"<div style='text-align: center; font-size: 18px; padding: 15px; line-height: 1.5;'>{row['내용']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align: center; font-size: 22px; padding: 20px;'>{row['내용']}</div>", unsafe_allow_html=True)
                 if st.session_state.study_mode_hide:
                      if st.button("다시 가리기", key="hide_content"):
                         st.session_state.study_reveal_content = False
@@ -380,37 +332,15 @@ def page_study():
                     st.session_state.study_reveal_addr = True
                     st.rerun()
             else:
-                st.markdown(f"<div style='text-align: center; font-size: 16px; color: gray; font-weight: bold;'>{row['장절']}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='text-align: center; font-size: 18px; color: gray; font-weight: bold;'>{row['장절']}</div>", unsafe_allow_html=True)
                 if st.session_state.study_mode_hide:
                      if st.button("다시 가리기", key="hide_addr"):
                         st.session_state.study_reveal_addr = False
                         st.rerun()
     
     with col_right:
-        st.markdown(
-            """
-            <style>
-                .mobile-arrow-btn button {
-                    width: 30px !important;
-                    height: 30px !important;
-                    padding: 0 !important;
-                    font-size: 16px !important;
-                    line-height: 1 !important;
-                    min-height: 0 !important;
-                    background: transparent !important;
-                    border: none !important;
-                    color: #555 !important;
-                    border-radius: 50% !important;
-                }
-                .mobile-arrow-btn button:hover {
-                    background-color: #f0f0f0 !important;
-                }
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-        st.markdown('<div class="mobile-arrow-btn">', unsafe_allow_html=True)
-        if st.button("▶", key="next_btn", use_container_width=False):  # ✅ 수정: use_container_width=False
+        st.markdown('<div class="arrow-btn">', unsafe_allow_html=True)
+        if st.button("▶", key="next_btn", use_container_width=True):
             st.session_state.study_idx += 1
             st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
