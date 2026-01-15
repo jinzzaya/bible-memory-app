@@ -343,6 +343,22 @@ def page_saved():
 
 
 # --- 페이지 4: 말씀 암송 ---
+def finish_test():
+    """테스트를 종료하고 결과 페이지로 전환"""
+    st.session_state.page = 'test_result'
+    st.rerun()
+
+def next_question():
+    """다음 문제로 이동하며 힌트 레벨 초기화"""
+    st.session_state.test_current_idx += 1
+    if st.session_state.test_current_idx < len(df):
+        st.session_state.test_hint_level = 3
+        st.session_state.test_status = 'input'
+        st.session_state.input_key_suffix += 1
+    else:
+        finish_test()
+    st.rerun()
+
 def init_test():
     st.session_state.test_current_idx = 0
     st.session_state.test_score = 0
@@ -391,6 +407,9 @@ def page_test():
     
     with c3:
         if st.button("끝"):
+            # 현재 인덱스 증가 (마지막 문제까지 카운트 포함)
+            st.session_state.test_current_idx += 1
+            # 테스트 종료 처리
             finish_test()
             return
 
@@ -567,5 +586,6 @@ elif st.session_state.page == 'test':
     page_test()
 elif st.session_state.page == 'test_result':
     page_test_result()
+
 
 
