@@ -20,7 +20,12 @@ st.markdown("""
     .gray-heart { color: gray; font-size: 24px; cursor: pointer; }
     .correct { color: green; font-weight: bold; font-size: 24px; text-align: center; }
     .incorrect { color: red; font-weight: bold; }
-    .diff-red { color: red; font-weight: bold; text-decoration: underline; }
+    .diff-red {
+    color: red;
+    font-weight: bold;
+    font-size: 1.1em;
+    margin: 0 2px;
+}
     .diff-green { color: green; font-weight: bold; }
     .login-box { padding: 20px; border: 1px solid #ddd; border-radius: 10px; margin-bottom: 20px; text-align: center; }
     
@@ -125,41 +130,28 @@ def toggle_save(verse_id):
     save_user_data_to_sheet(st.session_state.nickname, st.session_state.saved_verses)
 
 def diff_strings(user_input, correct_text):
-    # 공백을 기준으로 단어 리스트로 분리 (공백은 유지하기 위해 split(' ') 사용)
+    # 공백으로 단어 분리 (공백은 유지하기 위해 split(' ') 사용)
     user_words = user_input.split(' ')
     correct_words = correct_text.split(' ')
-    
-    matcher = difflib.SequenceMatcher(None, user_words, correct_words)
+
+    # 결과 리스트
     output_parts = []
+    
+    # 정답 단어를 순차적으로 순회하며 사용자 입력과 비교
     user_idx = 0
-    correct_idx = 0
+    for correct_word in correct_words:
+        if user_idx < len(user_words) and user_words[user_idx] == correct_word:
+            # 일치하면 해당 단어를 그대로 출력
+            output_parts.append(correct_word)
+            user_idx += 1
+        else:
+            # 일치하지 않으면 → 빠진 단어로 간주
+            output_parts.append("<span class='diff-red'>˅</span>")
+            # 사용자 입력은 건너뛰지 않음 → 다음 단어로 비교 계속
 
-    for opcode, a0, a1, b0, b1 in matcher.get_opcodes():
-        if opcode == 'equal':
-            # 동일한 단어들
-            for i in range(a1 - a0):
-                output_parts.append(user_words[a0 + i])
-            user_idx += a1 - a0
-            correct_idx += b1 - b0
+    # 사용자 입력에 남은 단어가 있다면 → 정답에 없는 추가 단어 (무시)
+    # → 우리는 정답 기준으로만 비교하므로 무시
 
-        elif opcode == 'delete':
-            # 사용자 입력에 없는 정답 단어 → 빠진 단어로 간주
-            for i in range(b1 - b0):
-                output_parts.append("<span class='diff-red'>˅</span>")
-                correct_idx += 1
-
-        elif opcode == 'insert':
-            # 사용자가 추가한 단어 → 정답에 없는 내용은 무시 (표시하지 않음)
-            user_idx += a1 - a0
-
-        elif opcode == 'replace':
-            # 교체된 단어 → 정답에 있던 단어가 사라졌으므로 "˅"로 대체
-            for i in range(b1 - b0):
-                output_parts.append("<span class='diff-red'>˅</span>")
-                correct_idx += 1
-            user_idx += a1 - a0
-
-    # 단어를 다시 공백으로 연결
     return ' '.join(output_parts)
 
 # --- 페이지 0: 로그인 ---
@@ -497,13 +489,11 @@ def check_answer(u_addr, u_content, r_addr, r_content, row_data):
     
     addr_correct = clean_u_addr == clean_r_addr
 
-    # 내용 비교 - 단어 단위 처리
     if u_content.strip() == "":
-        # 전체 내용이 빈 경우 → 정답 단어 수만큼 "˅" 삽입
         correct_words = r_content.split(' ')
         diff_html = ' '.join(["<span class='diff-red'>˅</span>"] * len(correct_words))
     else:
-        diff_html = diff_strings(u_content, r_content)  # 위에서 수정한 함수 사용
+        diff_html = diff_strings(u_content, r_content)  # ✅ 수정된 함수 사용
 
     if addr_correct and u_content.strip() == r_content.strip():
         st.session_state.test_score += 1
@@ -519,17 +509,6 @@ def check_answer(u_addr, u_content, r_addr, r_content, row_data):
         st.session_state.test_user_content = u_content
         st.session_state.test_status = 'wrong'
         st.rerun()
-
-def next_question():
-    st.session_state.test_current_idx += 1
-    st.session_state.test_hint_level = 3 
-    st.session_state.test_status = 'input'
-    st.session_state.input_key_suffix += 1 
-    st.rerun()
-
-def finish_test():
-    st.session_state.page = 'test_result'
-    st.rerun()
 
 # --- 페이지 5: 암송 결과 ---
 def page_test_result():
@@ -588,4 +567,5 @@ elif st.session_state.page == 'test':
     page_test()
 elif st.session_state.page == 'test_result':
     page_test_result()
+
 
